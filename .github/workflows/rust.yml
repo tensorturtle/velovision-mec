@@ -19,7 +19,7 @@ jobs:
     - name: Launch virtual video device
       run: ci_tools/fakestream.sh 0
     - name: install packaged dependencies
-      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libv4l2-dev nasm
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libv4l-dev nasm
     - name: Build
       run: cargo build --verbose
     - name: Run tests

@@ -7,7 +7,7 @@ Install them with apt.
 rscam requires
 
 ```
-libv4l2-dev
+libv4l-dev
 ```
 
 Turbojpeg requires

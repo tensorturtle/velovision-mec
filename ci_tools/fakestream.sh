@@ -4,7 +4,22 @@
 # v4l2loopback: https://github.com/umlaeute/v4l2loopback
 # gstreamer: https://gstreamer.freedesktop.org/documentation/installing/on-linux.html?gi-language=c
 
-# apt-get commands:
+# if v4l2loopback is not installed, install it
+if [ -z "$(lsmod | grep v4l2loopback)" ]; then
+    echo "v4l2loopback not installed"
+    echo "Installing v4l2loopback..."
+    echo
+    sudo apt-get install v4l2loopback-dkms
+fi
+
+# if gstreamer is not installed, install it
+if [ -z "$(which gst-launch-1.0)" ]; then
+    echo "gstreamer not installed"
+    echo "Installing gstreamer..."
+    echo
+    sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-doc gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
+fi
+
 # apt-get install v4l2loopback-dkms
 # apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-doc gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
 

@@ -4,6 +4,15 @@
 # v4l2loopback: https://github.com/umlaeute/v4l2loopback
 # gstreamer: https://gstreamer.freedesktop.org/documentation/installing/on-linux.html?gi-language=c
 
+# if v4l is not installed, install it
+if [ -z "$(which v4l2-ctl)" ]; then
+    echo "v4l2-ctl not installed"
+    echo "Installing v4l2-ctl..."
+    echo
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends v4l-utils
+fi
+
 # if v4l2loopback is not installed, install it
 if [ -z "$(lsmod | grep v4l2loopback)" ]; then
     echo "v4l2loopback not installed"
@@ -12,9 +21,8 @@ if [ -z "$(lsmod | grep v4l2loopback)" ]; then
     sudo apt-get purge v4l2loopback-dkms
     git clone https://github.com/umlaeute/v4l2loopback.git
     cd v4l2loopback
-    make
-    sudo su
-    make install
+    sudo make
+    sudo make install
 fi
 
 # if gstreamer is not installed, install it
@@ -22,8 +30,26 @@ if [ -z "$(which gst-launch-1.0)" ]; then
     echo "gstreamer not installed"
     echo "Installing gstreamer..."
     echo
-    sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-doc gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-doc gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
 fi
+
+# check that v4l2loopback is installed
+if [ -z "$(lsmod | grep v4l2loopback)" ]; then
+    echo "v4l2loopback not installed"
+    echo "Please install v4l2loopback"
+    echo
+    exit 1
+fi
+
+# check that gstreamer is installed
+if [ -z "$(which gst-launch-1.0)" ]; then
+    echo "gstreamer not installed"
+    echo "Please install gstreamer"
+    echo
+    exit 1
+fi
+
 
 # apt-get install v4l2loopback-dkms
 # apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-doc gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio

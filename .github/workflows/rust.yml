@@ -1,8 +1,10 @@
-name: Rust
+name: Rust Tests
 
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
   pull_request:
     branches: [ "main" ]
 

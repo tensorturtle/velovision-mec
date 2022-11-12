@@ -1,3 +1,7 @@
+# MECvision
+
+[![Rust](https://github.com/tensorturtle/waverust-client/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/tensorturtle/waverust-client/actions/workflows/rust.yml)
+
 # Dependencies
 
 This project depends on the following libraries:

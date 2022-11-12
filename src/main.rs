@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use rscam::{Camera, Config};
 use turbojpeg;
+use show_image::{ImageView, ImageInfo, create_window, WindowProxy};
 
 
 
@@ -37,7 +38,7 @@ fn decode_jpeg(frame: &rscam::Frame) -> Vec<u8> {
     return pixels;
 }
 
-fn raw_pixels_to_tensor(pixels: Vec<u8>) -> tch::Tensor {
+fn raw_pixels_to_tensor(pixels: &Vec<u8>) -> tch::Tensor {
     let pixel_tensor = tch::Tensor::of_slice(&pixels);
 
     // pixel_tensor is a 1D tensor organized as [R, G, B, R, G, B, ...]
@@ -59,18 +60,45 @@ fn running_in_ci_server() -> bool {
 }
 
 
+#[show_image::main]
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    dbg!(args);
+    // parse args for 
+    // 1. camera path
+    // 2. save image?
+    // 3. show image?
+    // confirm that we have at least 3 args
+    if args.len() < 4 {
+        println!("Usage: cargo run <camera_path> <save_image> <show_image>");
+        println!("Example (both save and show): cargo run /dev/video0 save show");
+        println!("Example (only show): cargo run /dev/video0 -- show");
+        return;
+    }
 
-    let cam_path = "/dev/video0";
+    let arg_cam_path = &args[1];
+    let arg_save_image = &args[2] == "save";
+    let arg_show_image = &args[3] == "show";
 
+    let window: WindowProxy;
+    let shown_image_info: ImageInfo;
+    window = show_image::create_window(
+        "camera display",
+        Default::default(),
+    ).unwrap();
+    shown_image_info = ImageInfo::new(
+        show_image::PixelFormat::Rgb8,
+        640,
+        480,
+    );
 
-    let camera: rscam::Camera = launch_camera(cam_path, 30, 640, 480, b"MJPG");
+    let camera: rscam::Camera = launch_camera(arg_cam_path, 30, 640, 480, b"MJPG");
 
     // for file naming
-    // let mut i = 0;
+    let mut i = 0;
+    if arg_save_image {
+        std::fs::create_dir_all("images").unwrap();
+    }
 
     loop {
         let start = std::time::Instant::now();
@@ -86,26 +114,32 @@ fn main() {
             let frame: rscam::Frame = camera.capture().unwrap();
             raw_pixels = decode_jpeg(&frame);
         }
-
-        // // measure postprocess time (ms)
+        // start timer
         let postprocess_start = std::time::Instant::now();
 
-        // raw_pixels = decode_jpeg(&frame);
-
-        //let raw_pixels = decode_jpeg(&frame);
-        //let image_tensor = raw_pixels_to_tensor(raw_pixels);
-        let image_tensor = raw_pixels_to_tensor(raw_pixels);
+        let image_tensor = raw_pixels_to_tensor(&raw_pixels);
 
         println!("resized pixel_tensor: {:?}", image_tensor.size());
 
         // save tensor as image
-        // let image_tensor_name = format!("images/image_tensor{}.jpg", i);
-
-        // create directory
-        //std::fs::create_dir_all("images").unwrap();
+        if arg_save_image {
+            // create directory
+            std::fs::create_dir_all("images").unwrap();
+            let filename = format!("images/image_{}.jpg", i);
+            save_tensor_as_image(image_tensor, &filename);
+            i += 1;
+        }
 
         // measure postprocess time in ms
         let postprocess_duration = postprocess_start.elapsed();
+
+        if arg_show_image {
+            let shown_image = show_image::ImageView::new(
+                shown_image_info,
+                &raw_pixels,
+            );
+            window.set_image("image", shown_image).unwrap();
+        }
 
         println!("Postprocessing: {:.3} ms", precise_duration_ms(postprocess_duration));
 
@@ -153,7 +187,7 @@ mod tests {
             pixels[i] = subpixel_value;
         }
 
-        let image_tensor: tch::Tensor = raw_pixels_to_tensor(pixels);
+        let image_tensor: tch::Tensor = raw_pixels_to_tensor(&pixels);
         println!("image_tensor shape: {:?}", image_tensor.size());
         assert_eq!(image_tensor.size(), &[3, 480, 640]); // C, H, W ordering for tensor
 

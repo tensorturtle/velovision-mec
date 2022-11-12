@@ -1,6 +1,6 @@
 # velovision-mec
 
-**velovision-mec** is a Multi-Access Edge Computing implementation of [velovision](https://github.com/tensorturtle/velovision).
+**velovision-mec** is a Multi-Access Edge Computing implementation of [velovision](https://github.com/hydoai/velovision).
 
 [![Rust](https://github.com/tensorturtle/waverust-client/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/tensorturtle/waverust-client/actions/workflows/rust.yml)
 

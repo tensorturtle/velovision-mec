@@ -52,12 +52,10 @@ fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
     tch::vision::image::save(&tensor, path).unwrap();
 }
 
-fn baremetal() -> bool {
-    // Use virt-what to check if we are in a virtual machine
-    let output = std::process::Command::new("virt-what").output().unwrap();
-
-    // if output is empty, we are not in a virtual machine
-    return output.stdout.is_empty();
+fn running_in_ci_server() -> bool {
+    // check CI environment variable
+    let ci = env::var("CI").unwrap_or("false".to_string());
+    return ci == "true";
 }
 
 
@@ -79,16 +77,14 @@ fn main() {
 
         let raw_pixels: Vec<u8>;
 
-        if baremetal() {
+        if running_in_ci_server() {
+            println!("CI server detected, using test image");
+            raw_pixels = vec![0u8; 640 * 480 * 3];
+        } else {
             // get frame from actual camera
             println!("Getting frame from camera");
             let frame: rscam::Frame = camera.capture().unwrap();
             raw_pixels = decode_jpeg(&frame);
-        } else {
-            // get frame from file
-            //let frame = std::fs::read("test.jpg").unwrap();
-            //raw_pixels = decode_jpeg(&frame);
-            raw_pixels = vec![0u8; 640 * 480 * 3];
         }
 
         // // measure postprocess time (ms)
@@ -125,7 +121,7 @@ mod tests {
     use super::{
         raw_pixels_to_tensor,
         launch_camera,
-        baremetal,
+        running_in_ci_server,
     };
 
     #[test]
@@ -134,7 +130,7 @@ mod tests {
     }
     #[test]
     fn preproc_launch_camera() {
-        if !baremetal() {
+        if running_in_ci_server() {
             // skip test if not baremetal
             return;
         }

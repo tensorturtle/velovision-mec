@@ -15,6 +15,11 @@ Turbojpeg requires
 nasm
 ```
 
+`baremetal()`, which detects if system is running on bare metal or a container, requires
+```
+virt-what
+```
+
 # Image Pre-processing Notes
 
 Optimal strategy so far (1-2ms):

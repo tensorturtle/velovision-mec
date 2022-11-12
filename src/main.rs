@@ -34,7 +34,7 @@ fn decode_jpeg(frame: &rscam::Frame) -> Vec<u8> {
     // 1.4ms for 640x480
     let image: image::RgbImage = turbojpeg::decompress_image(&frame[..]).unwrap();
     let pixels = image.into_raw();
-    return pixels
+    return pixels;
 }
 
 fn raw_pixels_to_tensor(pixels: Vec<u8>) -> tch::Tensor {
@@ -52,26 +52,55 @@ fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
     tch::vision::image::save(&tensor, path).unwrap();
 }
 
+fn baremetal() -> bool {
+    // Use virt-what to check if we are in a virtual machine
+
+    let output = std::process::Command::new("virt-what")
+        .output()
+        .expect("Failed to execute virt-what");
+    
+    // if output is empty, we are not in a virtual machine
+    return output.stdout.is_empty();
+}
+
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     dbg!(args);
 
-    let camera: rscam::Camera = launch_camera("/dev/video0", 30, 640, 480, b"MJPG");
+    let cam_path = "/dev/video0";
+
+
+    let camera: rscam::Camera = launch_camera(cam_path, 30, 640, 480, b"MJPG");
 
     // for file naming
     // let mut i = 0;
 
     loop {
         let start = std::time::Instant::now();
-    
-        let frame: rscam::Frame = camera.capture().unwrap();
 
-        // measure postprocess time (ms)
+        let raw_pixels: Vec<u8>;
+
+        if baremetal() {
+            // get frame from actual camera
+            println!("Getting frame from camera");
+            let frame: rscam::Frame = camera.capture().unwrap();
+            raw_pixels = decode_jpeg(&frame);
+        } else {
+            // get frame from file
+            //let frame = std::fs::read("test.jpg").unwrap();
+            //raw_pixels = decode_jpeg(&frame);
+            raw_pixels = vec![0u8; 640 * 480 * 3];
+        }
+
+        // // measure postprocess time (ms)
         let postprocess_start = std::time::Instant::now();
 
-        let raw_pixels = decode_jpeg(&frame);
+        // raw_pixels = decode_jpeg(&frame);
+
+        //let raw_pixels = decode_jpeg(&frame);
+        //let image_tensor = raw_pixels_to_tensor(raw_pixels);
         let image_tensor = raw_pixels_to_tensor(raw_pixels);
 
         println!("resized pixel_tensor: {:?}", image_tensor.size());
@@ -99,6 +128,7 @@ mod tests {
     use super::{
         raw_pixels_to_tensor,
         launch_camera,
+        baremetal,
     };
 
     #[test]
@@ -107,6 +137,10 @@ mod tests {
     }
     #[test]
     fn preproc_launch_camera() {
+        if !baremetal() {
+            // skip test if not baremetal
+            assert!(true);
+        }
         let width = 640;
         let height = 480;
 
@@ -125,7 +159,7 @@ mod tests {
             pixels[i] = subpixel_value;
         }
 
-        let image_tensor = raw_pixels_to_tensor(pixels);
+        let image_tensor: tch::Tensor = raw_pixels_to_tensor(pixels);
         println!("image_tensor shape: {:?}", image_tensor.size());
         assert_eq!(image_tensor.size(), &[3, 480, 640]); // C, H, W ordering for tensor
 

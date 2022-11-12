@@ -1,4 +1,6 @@
 # Create a mock video stream for testing purposes
+# NOTE: Container-based CI systems like Github Actions does not support dynamic kernel modules.
+# Therefore, this script will only work on a full VM or bare metal Debian/Ubuntu system.
 
 # required packages on Debian/Ubuntu
 # v4l2loopback: https://github.com/umlaeute/v4l2loopback

@@ -1,9 +1,10 @@
 use std::env;
 use std::time::Duration;
+use std::io;
 
 use rscam::{Camera, Config};
 use turbojpeg;
-use show_image::{ImageView, ImageInfo, create_window, WindowProxy};
+use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 
 
 
@@ -16,18 +17,20 @@ fn precise_duration_ms(duration: Duration) -> f64 {
     return prec_ms;
 }
 
-fn launch_camera(path: &str, fps: u32, width: u32, height: u32, format: &[u8]) -> rscam::Camera {
-    let mut camera = Camera::new(path).unwrap();
-
-    camera.start(&Config {
-        interval: (1, fps),
-        resolution: (width, height),
-        //format: b"MJPG",
-        format: format,
-        ..Default::default()
-    }).unwrap();
-
-    return camera;
+fn launch_camera(path: &str, fps: u32, width: u32, height: u32, format: &[u8]) -> io::Result<rscam::Camera> {
+    let camera_handle = Camera::new(path);
+    match camera_handle {
+        Ok(mut cam) => {
+            cam.start(&Config {
+                interval: (1, fps),
+                resolution: (width, height),
+                format: format,
+                ..Default::default()
+            }).unwrap();
+            Ok(cam)
+        },
+        Err(e) => Err(e)
+    }
 }
 
 fn decode_jpeg(frame: &rscam::Frame) -> Vec<u8> {
@@ -53,11 +56,6 @@ fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
     tch::vision::image::save(&tensor, path).unwrap();
 }
 
-fn running_in_ci_server() -> bool {
-    // check CI environment variable
-    let ci = env::var("CI").unwrap_or("false".to_string());
-    return ci == "true";
-}
 
 
 #[show_image::main]
@@ -81,18 +79,22 @@ fn main() {
     let arg_show_image = &args[3] == "show";
 
     let window: WindowProxy;
-    let shown_image_info: ImageInfo;
+
+    let window_options = WindowOptions {
+        start_hidden: true,
+        ..Default::default()
+    };
     window = show_image::create_window(
         "camera display",
-        Default::default(),
+        window_options,
     ).unwrap();
-    shown_image_info = ImageInfo::new(
+    let shown_image_info = ImageInfo::new(
         show_image::PixelFormat::Rgb8,
         640,
         480,
     );
 
-    let camera: rscam::Camera = launch_camera(arg_cam_path, 30, 640, 480, b"MJPG");
+    let camera: Result<rscam::Camera, io::Error> = launch_camera(arg_cam_path, 30, 640, 480, b"MJPG");
 
     // for file naming
     let mut i = 0;
@@ -105,15 +107,14 @@ fn main() {
 
         let raw_pixels: Vec<u8>;
 
-        if running_in_ci_server() {
-            println!("CI server detected, using test image");
-            raw_pixels = vec![0u8; 640 * 480 * 3];
-        } else {
-            // get frame from actual camera
-            println!("Getting frame from camera");
-            let frame: rscam::Frame = camera.capture().unwrap();
+        if camera.is_ok() {
+            let frame = camera.as_ref().unwrap().capture().unwrap();
             raw_pixels = decode_jpeg(&frame);
+        } else {
+            // if camera is not found, generate random pixels
+            raw_pixels = vec![0; 640 * 480 * 3];
         }
+
         // start timer
         let postprocess_start = std::time::Instant::now();
 
@@ -138,6 +139,9 @@ fn main() {
                 shown_image_info,
                 &raw_pixels,
             );
+            window.run_function(|mut window| {
+                window.set_visible(true);
+            });
             window.set_image("image", shown_image).unwrap();
         }
 
@@ -151,33 +155,41 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    // Test Conventions
+    // + "common" tests are meant to be run on any platform (including CI)
+    // + "bare" tests are for systems with cameras & hardware connected. They are expected to fail on CI
     use tch::Kind;
+    use std::env;
     use super::{
         raw_pixels_to_tensor,
         launch_camera,
-        running_in_ci_server,
     };
 
+    fn running_in_ci_server() -> bool {
+        // check CI environment variable
+        let ci = env::var("CI").unwrap_or("false".to_string());
+        return ci == "true";
+    }
+
     #[test]
-    fn it_works() {
+    fn common_it_works() {
         assert_eq!(2 + 2, 4);
     }
     #[test]
-    fn preproc_launch_camera() {
+    fn bare_preproc_launch_camera() {
         if running_in_ci_server() {
-            // skip test if not baremetal
-            return;
+            assert!(false, "This is a bare test, and should not be run on CI");
         }
         println!("Is bare metal - running test");
         let width = 640;
         let height = 480;
 
-        let camera: rscam::Camera = launch_camera("/dev/video0", 30, width, height, b"MJPG");
+        let camera = launch_camera("/dev/video0", 30, width, height, b"MJPG").unwrap();
         let frame: rscam::Frame = camera.capture().unwrap();
         assert_eq!(frame.resolution, (width, height));
     }
     #[test]
-    fn preproc_raw_pixels_to_tensor() {
+    fn common_preproc_raw_pixels_to_tensor() {
         let subpixel_value: u8 = 255; // 0-255 for 8-bit pixel values
         let sum_subpixel_value: u32 = subpixel_value as u32 * 640 * 480 * 3; // we will use this to check that the tensor sum is correct
 

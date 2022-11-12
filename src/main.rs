@@ -1,10 +1,10 @@
-use std::env;
 use std::time::Duration;
-use std::io;
+use std::{io, env, thread};
 
 use rscam::{Camera, Config};
 use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
+use ctrlc;
 
 
 
@@ -93,6 +93,13 @@ fn main() {
         640,
         480,
     );
+
+    // clean up window - if not done, gnome-shell eats CPU
+    ctrlc::set_handler(move || {
+        println!("Exiting...");
+        show_image::exit(0);
+    }).expect("Error setting Ctrl-C handler");
+
 
     let camera: Result<rscam::Camera, io::Error> = launch_camera(arg_cam_path, 30, 640, 480, b"MJPG");
 

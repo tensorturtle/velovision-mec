@@ -19,6 +19,11 @@ Turbojpeg requires
 nasm
 ```
 
+ZMQ
+```
+libzmq3-dev
+```
+
 # Image Pre-processing Notes
 
 Optimal strategy so far (1-2ms):

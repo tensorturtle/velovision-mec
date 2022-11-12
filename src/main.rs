@@ -54,11 +54,8 @@ fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
 
 fn baremetal() -> bool {
     // Use virt-what to check if we are in a virtual machine
+    let output = std::process::Command::new("virt-what").output().unwrap();
 
-    let output = std::process::Command::new("virt-what")
-        .output()
-        .expect("Failed to execute virt-what");
-    
     // if output is empty, we are not in a virtual machine
     return output.stdout.is_empty();
 }
@@ -139,8 +136,9 @@ mod tests {
     fn preproc_launch_camera() {
         if !baremetal() {
             // skip test if not baremetal
-            assert!(true);
+            return;
         }
+        println!("Is bare metal - running test");
         let width = 640;
         let height = 480;
 

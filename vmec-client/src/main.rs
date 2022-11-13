@@ -5,6 +5,7 @@ use rscam::{Camera, Config};
 use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 use ctrlc;
+use thread_tryjoin::TryJoinHandle;
 
 
 
@@ -109,25 +110,42 @@ fn main() {
         std::fs::create_dir_all("images").unwrap();
     }
 
+    // basic ZMQ request client
+    let context = zmq::Context::new();
+
     loop {
+        println!("");
+
+
         let start = std::time::Instant::now();
 
         let raw_pixels: Vec<u8>;
 
-        if camera.is_ok() {
-            let frame = camera.as_ref().unwrap().capture().unwrap();
-            raw_pixels = decode_jpeg(&frame);
-        } else {
-            // if camera is not found, generate random pixels
-            raw_pixels = vec![0; 640 * 480 * 3];
-        }
+        let frame = camera.as_ref().unwrap().capture().unwrap();
+
+        // send jpeg image through zmq
+        //println!("Sending image...");
+        let requester = context.socket(zmq::REQ).unwrap();
+        assert!(requester.connect("tcp://localhost:5555").is_ok());
+        // send a request, wait for reply
+        // run in a thread so we can do other stuff while waiting
+        //println!("Spawning thread to receive reply");
+        let request_handle = thread::spawn(move || {
+            requester.send("Hello", 0).unwrap();
+            requester.recv_string(0).unwrap().unwrap()
+        });
+
+        raw_pixels = decode_jpeg(&frame);
+
+        // // if camera is not found, generate random pixels
+        // raw_pixels = vec![0; 640 * 480 * 3];
 
         // start timer
         let postprocess_start = std::time::Instant::now();
 
         let image_tensor = raw_pixels_to_tensor(&raw_pixels);
 
-        println!("resized pixel_tensor: {:?}", image_tensor.size());
+        //println!("resized pixel_tensor: {:?}", image_tensor.size());
 
         // save tensor as image
         if arg_save_image {
@@ -152,11 +170,21 @@ fn main() {
             window.set_image("image", shown_image).unwrap();
         }
 
-        println!("Postprocessing: {:.3} ms", precise_duration_ms(postprocess_duration));
+        //println!("Postprocessing: {:.3} ms", precise_duration_ms(postprocess_duration));
 
         // measure time
         let duration = start.elapsed();
-        println!("frame: {} ms", duration.subsec_millis());
+        //println!("frame: {} ms", duration.subsec_millis());
+
+        // do some local work while waiting for remote reply
+        thread::sleep(Duration::from_millis(30));
+
+        if request_handle.is_finished() {
+            let reply = request_handle.join().unwrap();
+            println!("Received reply in time: {}", reply);
+        } else {
+            println!("Timeout: Reply from server did not arrive by the time local work was done. Continuing...");
+        }
     }
 }
 

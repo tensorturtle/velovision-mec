@@ -1,4 +1,5 @@
 [package]
+build = "build.rs"
 name = "vmec-server"
 version = "0.1.0"
 edition = "2021"
@@ -6,4 +7,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+capnp = "0.15.0"
 zmq = "0.10.0"
+
+[build-dependencies]
+capnpc = "0.15.0"
+capnp = "0.15.0"

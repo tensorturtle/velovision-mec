@@ -27,6 +27,13 @@ ZMQ
 libzmq3-dev
 ```
 
+Capn Proto
+```
+capnproto
+libcapnp-dev
+```
+
+
 # Image Pre-processing Notes
 
 Optimal strategy so far (1-2ms):

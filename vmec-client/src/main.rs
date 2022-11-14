@@ -5,7 +5,6 @@ use rscam::{Camera, Config};
 use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 use ctrlc;
-use thread_tryjoin::TryJoinHandle;
 
 
 

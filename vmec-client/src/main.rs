@@ -135,14 +135,18 @@ fn main() {
         // send jpeg image through zmq
         //println!("Sending image...");
         let requester = context.socket(zmq::REQ).unwrap();
-        assert!(requester.connect("tcp://localhost:5555").is_ok());
+        //let address = "tcp://localhost:5555";
+        let address = "tcp://18.219.199.0:5555";
+        assert!(requester.connect(address).is_ok());
 
         let vmec_request_vals = VmecRequestFields {
             timestamp_ms: 101010101111,
             device_hash: String::from("ee70384492767846"),
             request_hash: String::from("hamilton"),
             image_front: Vec::from(&(*frame)),
+            //image_front: Vec::from([1,2,3]),
             image_rear: Vec::from(&(*frame)),
+            //image_rear: Vec::from([1,2,3]),
         };
 
         // vmec_request_vals.image_front = Vec::from(&(*frame));
@@ -205,12 +209,14 @@ fn main() {
         //println!("frame: {} ms", duration.subsec_millis());
 
         // do some local work while waiting for remote reply
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(1000));
 
         if request_handle.is_finished() {
             let (roundtrip_time, reply_bytes) = request_handle.join().unwrap();
             let reply = vmec_response_transport::decode_response(&reply_bytes).unwrap();
             println!("Roundtrip time: {} μs", roundtrip_time.as_micros());
+            println!("Roundtrip time: {} ms",
+        roundtrip_time.as_millis());
             println!("Reply data timestamp: {} ms", reply.timestamp_ms);
         } else {
             println!("Timeout: Reply from server did not arrive by the time local work was done. Continuing...");

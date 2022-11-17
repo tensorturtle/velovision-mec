@@ -6,7 +6,15 @@ use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 use ctrlc;
 
-
+use cornflakes::{
+    capnp_bytes_io,
+    VmecRequestFields, 
+    VmecResponseFields,
+    vmec_request_capnp,
+    vmec_response_capnp,
+    vmec_request_transport,
+    vmec_response_transport,
+};
 
 fn print_type<T>(_: &T) {
     println!("{}", std::any::type_name::<T>())
@@ -94,7 +102,7 @@ fn main() {
         480,
     );
 
-    // clean up window - if not done, gnome-shell eats CPU
+    // clean up window - if not done, gnome-shell leaks and eats CPU
     ctrlc::set_handler(move || {
         println!("Exiting...");
         show_image::exit(0);
@@ -122,19 +130,40 @@ fn main() {
 
         let frame = camera.as_ref().unwrap().capture().unwrap();
 
+        raw_pixels = decode_jpeg(&frame);
+
         // send jpeg image through zmq
         //println!("Sending image...");
         let requester = context.socket(zmq::REQ).unwrap();
         assert!(requester.connect("tcp://localhost:5555").is_ok());
+
+        let vmec_request_vals = VmecRequestFields {
+            timestamp_ms: 101010101111,
+            device_hash: String::from("ee70384492767846"),
+            request_hash: String::from("hamilton"),
+            image_front: Vec::from(&(*frame)),
+            image_rear: Vec::from(&(*frame)),
+        };
+
+        // vmec_request_vals.image_front = Vec::from(&(*frame));
+
+        let request_to_send = vmec_request_transport::encode_request(vmec_request_vals).unwrap();
         // send a request, wait for reply
         // run in a thread so we can do other stuff while waiting
         //println!("Spawning thread to receive reply");
         let request_handle = thread::spawn(move || {
-            requester.send("Hello", 0).unwrap();
-            requester.recv_string(0).unwrap().unwrap()
+            //requester.send("Hello", 0).unwrap();
+            // time round trip
+            let sent_time = std::time::Instant::now();
+            requester.send(request_to_send, 0).unwrap();
+
+            let received_bytes = requester.recv_bytes(0).unwrap();
+
+            // calculate duration
+            let duration = sent_time.elapsed();
+            (duration, received_bytes)
         });
 
-        raw_pixels = decode_jpeg(&frame);
 
         // // if camera is not found, generate random pixels
         // raw_pixels = vec![0; 640 * 480 * 3];
@@ -176,11 +205,13 @@ fn main() {
         //println!("frame: {} ms", duration.subsec_millis());
 
         // do some local work while waiting for remote reply
-        thread::sleep(Duration::from_millis(30));
+        thread::sleep(Duration::from_millis(20));
 
         if request_handle.is_finished() {
-            let reply = request_handle.join().unwrap();
-            println!("Received reply in time: {}", reply);
+            let (roundtrip_time, reply_bytes) = request_handle.join().unwrap();
+            let reply = vmec_response_transport::decode_response(&reply_bytes).unwrap();
+            println!("Roundtrip time: {} μs", roundtrip_time.as_micros());
+            println!("Reply data timestamp: {} ms", reply.timestamp_ms);
         } else {
             println!("Timeout: Reply from server did not arrive by the time local work was done. Continuing...");
         }
@@ -226,7 +257,6 @@ mod tests {
     fn common_preproc_raw_pixels_to_tensor() {
         let subpixel_value: u8 = 255; // 0-255 for 8-bit pixel values
         let sum_subpixel_value: u32 = subpixel_value as u32 * 640 * 480 * 3; // we will use this to check that the tensor sum is correct
-
         // Create a 640x480 image where all pixels are the same value
         let mut pixels = vec![0; 640 * 480 * 3];
         for i in 0..pixels.len() {

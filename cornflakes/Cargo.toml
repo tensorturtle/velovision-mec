@@ -1,14 +1,13 @@
 [package]
-name = "vmec-server"
+build = "build.rs"
+name = "cornflakes"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cornflakes = { path="../cornflakes" }
 capnp = "0.15.0"
-zmq = "0.10.0"
 
 [build-dependencies]
 capnpc = "0.15.0"

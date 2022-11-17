@@ -2,10 +2,9 @@
 
 struct ReqFrame {
   timestampMs @0 :UInt64;
-  monotonicId @1 :UInt64;
-  deviceHash @2 :Text;
-  sessionHash @3 :Text;
-  images @4 :List(CameraImage);
+  deviceHash @1 :Text;
+  requestHash @2 :Text;
+  images @3 :List(CameraImage);
 
   struct CameraImage{
     jpegbytes@0 :Data;

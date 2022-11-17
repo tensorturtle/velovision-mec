@@ -35,6 +35,18 @@ capnproto
 libcapnp-dev
 ```
 
+# Intermediate Results
+
+## Baseline
+
++ Client: West Lafayette, IN
++ Server: AWS EC2 us-east-2 (Ohio) Small instance
++ Speedtest.net: Ping 28ms, Download 243 Mbps, Upload 22.52 Mbps
+
+Upload two 640x480x3 images, dummy download: 220-280 ms
+
+Upload two 3x1 "images", dummy download round trip: 120-150 ms
+
 
 # Image Pre-processing Notes
 

@@ -13,6 +13,10 @@ This project depends on the following libraries:
 
 Install them with apt.
 
+```
+build-essentials
+```
+
 rscam requires
 
 ```

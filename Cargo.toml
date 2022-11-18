@@ -1,8 +1,0 @@
-[workspace]
-resolver = "2" # required to compile wgpu-core in client
-
-members = [
-    "vmec-client",
-    "cornflakes",
-    "vmec-server",
-]

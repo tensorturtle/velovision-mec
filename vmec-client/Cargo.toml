@@ -16,6 +16,8 @@ ctrlc = "3.2.3"
 zmq = "0.10.0"
 capnp = "0.15.0"
 cornflakes = { path = "../cornflakes" }
+log = "0.4.17"
+simple-logging = "2.0.2"
 
 [build-dependencies]
 capnpc = "0.15.0"

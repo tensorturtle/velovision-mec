@@ -1,20 +1,21 @@
 use std::time::Duration;
 use std::{io, env, thread};
 
+use log::{debug, info, warn, error};
+use log::LevelFilter;
+
 use rscam::{Camera, Config};
 use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 use ctrlc;
 
 use cornflakes::{
-    capnp_bytes_io,
     VmecRequestFields, 
     VmecResponseFields,
-    vmec_request_capnp,
-    vmec_response_capnp,
     vmec_request_transport,
     vmec_response_transport,
 };
+
 
 fn print_type<T>(_: &T) {
     println!("{}", std::any::type_name::<T>())
@@ -68,6 +69,8 @@ fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
 
 #[show_image::main]
 fn main() {
+    simple_logging::log_to_stderr(LevelFilter::Info);
+
     let args: Vec<String> = env::args().collect();
 
     // parse args for 
@@ -121,8 +124,7 @@ fn main() {
     let context = zmq::Context::new();
 
     loop {
-        println!("");
-
+        info!("=== Next Frame ===\n");
 
         let start = std::time::Instant::now();
 
@@ -134,10 +136,6 @@ fn main() {
 
         // send jpeg image through zmq
         //println!("Sending image...");
-        let requester = context.socket(zmq::REQ).unwrap();
-        //let address = "tcp://localhost:5555";
-        let address = "tcp://18.219.199.0:5555";
-        assert!(requester.connect(address).is_ok());
 
         let vmec_request_vals = VmecRequestFields {
             timestamp_ms: 101010101111,
@@ -155,17 +153,39 @@ fn main() {
         // send a request, wait for reply
         // run in a thread so we can do other stuff while waiting
         //println!("Spawning thread to receive reply");
+
+        // Normally, ZMQ sockets are created once outside of loop
+        // However, since the socket is moved into the thread, we need to recreate it
+        let requester = context.socket(zmq::REQ).unwrap();
+        requester.set_rcvtimeo(1000).unwrap(); // 2 second timeout. Important to set it because otherwise infinite connections will be made since this ZMQ socket is run in a thread
+        //let address = "tcp://localhost:5555";
+        let address = "tcp://18.219.199.0:5555";
+        assert!(requester.connect(address).is_ok());
+
         let request_handle = thread::spawn(move || {
             //requester.send("Hello", 0).unwrap();
             // time round trip
             let sent_time = std::time::Instant::now();
+            debug!("Inside ZMQ Thread: Sending request");
             requester.send(request_to_send, 0).unwrap();
+            debug!("Inside ZMQ Thread: Sent request");
 
-            let received_bytes = requester.recv_bytes(0).unwrap();
+            //let received_bytes = requester.recv_bytes(0).unwrap();
+
+            match requester.recv_bytes(0) {
+                Ok(received_bytes) => {
+                    let duration = sent_time.elapsed();
+                    return Ok((duration, received_bytes));
+                },
+                Err(_) => {
+                    debug!("Inside ZMQ Thread: Socket timed out waiting for reply");
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, "ZMQ Timeout"))
+                }
+            }
 
             // calculate duration
-            let duration = sent_time.elapsed();
-            (duration, received_bytes)
+            //let duration = sent_time.elapsed();
+            //(duration, received_bytes)
         });
 
 
@@ -209,17 +229,24 @@ fn main() {
         //println!("frame: {} ms", duration.subsec_millis());
 
         // do some local work while waiting for remote reply
-        thread::sleep(Duration::from_millis(1000));
+        thread::sleep(Duration::from_millis(2000));
 
         if request_handle.is_finished() {
-            let (roundtrip_time, reply_bytes) = request_handle.join().unwrap();
+            debug!("Request thread finished");
+            let (roundtrip_time, reply_bytes) = match request_handle.join().unwrap() {
+                Ok(thread_output) => thread_output,
+                Err(e) => {
+                    debug!("Error in request thread: {:?}", e);
+                    continue;
+                }
+            };
             let reply = vmec_response_transport::decode_response(&reply_bytes).unwrap();
-            println!("Roundtrip time: {} μs", roundtrip_time.as_micros());
-            println!("Roundtrip time: {} ms",
+            info!("Roundtrip time: {} μs", roundtrip_time.as_micros());
+            info!("Roundtrip time: {} ms",
         roundtrip_time.as_millis());
-            println!("Reply data timestamp: {} ms", reply.timestamp_ms);
+            info!("Reply data timestamp: {} ms", reply.timestamp_ms);
         } else {
-            println!("Timeout: Reply from server did not arrive by the time local work was done. Continuing...");
+            warn!("Timeout: Reply from server did not arrive by the time local work was done. Continuing...");
         }
     }
 }

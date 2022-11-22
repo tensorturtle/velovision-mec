@@ -1,5 +1,7 @@
 use std::time::Duration;
 use std::{io, env, thread};
+use std::io::Write;
+use std::fs;
 
 use log::{debug, info, warn, error};
 use log::LevelFilter;
@@ -8,6 +10,7 @@ use rscam::{Camera, Config};
 use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 use ctrlc;
+use image;
 
 use cornflakes::{
     VmecRequestFields, 
@@ -42,7 +45,16 @@ fn launch_camera(path: &str, fps: u32, width: u32, height: u32, format: &[u8]) -
     }
 }
 
-fn decode_jpeg(frame: &rscam::Frame) -> Vec<u8> {
+fn decode_jpeg_to_imagebuffer(frame: &rscam::Frame) -> image::ImageBuffer<image::Rgb<u8>, Vec<u8>> {
+    let image: image::RgbImage = turbojpeg::decompress_image(&frame[..]).unwrap();
+    image
+}
+
+fn encode_imagebuffer_to_jpeg(image: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>) -> turbojpeg::OwnedBuf {
+    turbojpeg::compress_image(image, 100, turbojpeg::Subsamp::Sub2x2).unwrap()
+}
+
+fn decode_jpeg_to_raw(frame: &rscam::Frame) -> Vec<u8> {
     // convert JPEG from camera to raw image with turbojpeg
     // 1.4ms for 640x480
     let image: image::RgbImage = turbojpeg::decompress_image(&frame[..]).unwrap();
@@ -65,11 +77,19 @@ fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
     tch::vision::image::save(&tensor, path).unwrap();
 }
 
+fn crush(frame: &rscam::Frame, width: u32, height: u32) -> Vec<u8> {
+    let imgbuf = decode_jpeg_to_imagebuffer(frame);
 
+    let resized_imgbuf = image::imageops::resize(&imgbuf, width, height, image::imageops::FilterType::Triangle); // choose CatmullRom (cubic) for better quality and Lanczos3 for best quality
+    
+    let encoded_jpeg = turbojpeg::compress_image(&resized_imgbuf, 50, turbojpeg::Subsamp::Sub2x2).unwrap();
+
+    encoded_jpeg[..].to_vec()
+}
 
 #[show_image::main]
 fn main() {
-    simple_logging::log_to_stderr(LevelFilter::Info);
+    simple_logging::log_to_stderr(LevelFilter::Debug);
 
     let args: Vec<String> = env::args().collect();
 
@@ -112,7 +132,7 @@ fn main() {
     }).expect("Error setting Ctrl-C handler");
 
 
-    let camera: Result<rscam::Camera, io::Error> = launch_camera(arg_cam_path, 30, 640, 480, b"MJPG");
+    let camera: Result<rscam::Camera, io::Error> = launch_camera(arg_cam_path, 30, 320, 240, b"MJPG");
 
     // for file naming
     let mut i = 0;
@@ -128,11 +148,48 @@ fn main() {
 
         let start = std::time::Instant::now();
 
-        let raw_pixels: Vec<u8>;
+        //let raw_pixels: Vec<u8>;
 
         let frame = camera.as_ref().unwrap().capture().unwrap();
 
-        raw_pixels = decode_jpeg(&frame);
+        // decode, resize, and re-encode with lower quality
+        // let t1 = precise_duration_ms(start.elapsed());
+        // let img = crush(&frame, 320, 240);
+        // let t2 = precise_duration_ms(start.elapsed());
+
+        // println!("Time to decode and re-encode: {}ms", t2 - t1);
+
+        // write encoded_jpeg to file as .jpg
+        // let mut file = std::fs::OpenOptions::new()
+        // .write(true)
+        // .create(true)
+        // .open(format!("images/{}_fromcam.jpg", i)).unwrap();
+        // i += 1;
+
+        // file.write_all(&frame[..]).unwrap();
+
+
+
+        // let mut file = std::fs::OpenOptions::new()
+        // .write(true)
+        // .create(true)
+        // .open(format!("images/{}_reencoded.jpg", i)).unwrap();
+        // i += 1;
+        // file.write_all(&img[..]).unwrap();
+
+
+    
+
+
+
+
+
+        // get size of encoded jpeg
+        println!("Size of frame from camera: {}", frame.len());
+        //println!("Size of re-encoded image: {}", img.len());
+
+        //print_type(&(frame.to_vec()));
+
 
         // send jpeg image through zmq
         //println!("Sending image...");
@@ -142,9 +199,9 @@ fn main() {
             device_hash: String::from("ee70384492767846"),
             request_hash: String::from("hamilton"),
             image_front: Vec::from(&(*frame)),
-            //image_front: Vec::from([1,2,3]),
+            // image_front: Vec::from([1,2,3]),
             image_rear: Vec::from(&(*frame)),
-            //image_rear: Vec::from([1,2,3]),
+            // image_rear: Vec::from([1,2,3]),
         };
 
         // vmec_request_vals.image_front = Vec::from(&(*frame));
@@ -157,9 +214,9 @@ fn main() {
         // Normally, ZMQ sockets are created once outside of loop
         // However, since the socket is moved into the thread, we need to recreate it
         let requester = context.socket(zmq::REQ).unwrap();
-        requester.set_rcvtimeo(1000).unwrap(); // 2 second timeout. Important to set it because otherwise infinite connections will be made since this ZMQ socket is run in a thread
+        requester.set_rcvtimeo(300).unwrap(); // 2 second timeout. Important to set it because otherwise infinite connections will be made since this ZMQ socket is run in a thread
         //let address = "tcp://localhost:5555";
-        let address = "tcp://18.219.199.0:5555";
+        let address = "tcp://18.188.177.59:5555";
         assert!(requester.connect(address).is_ok());
 
         let request_handle = thread::spawn(move || {
@@ -167,6 +224,7 @@ fn main() {
             // time round trip
             let sent_time = std::time::Instant::now();
             debug!("Inside ZMQ Thread: Sending request");
+            debug!("Length of request: {}", request_to_send.len());
             requester.send(request_to_send, 0).unwrap();
             debug!("Inside ZMQ Thread: Sent request");
 
@@ -175,6 +233,7 @@ fn main() {
             match requester.recv_bytes(0) {
                 Ok(received_bytes) => {
                     let duration = sent_time.elapsed();
+                    debug!("Length of received bytes: {}", received_bytes.len());
                     return Ok((duration, received_bytes));
                 },
                 Err(_) => {
@@ -195,7 +254,7 @@ fn main() {
         // start timer
         let postprocess_start = std::time::Instant::now();
 
-        let image_tensor = raw_pixels_to_tensor(&raw_pixels);
+        //let image_tensor = raw_pixels_to_tensor(&raw_pixels);
 
         //println!("resized pixel_tensor: {:?}", image_tensor.size());
 
@@ -204,23 +263,23 @@ fn main() {
             // create directory
             std::fs::create_dir_all("images").unwrap();
             let filename = format!("images/image_{}.jpg", i);
-            save_tensor_as_image(image_tensor, &filename);
+            //save_tensor_as_image(image_tensor, &filename);
             i += 1;
         }
 
         // measure postprocess time in ms
         let postprocess_duration = postprocess_start.elapsed();
 
-        if arg_show_image {
-            let shown_image = show_image::ImageView::new(
-                shown_image_info,
-                &raw_pixels,
-            );
-            window.run_function(|mut window| {
-                window.set_visible(true);
-            });
-            window.set_image("image", shown_image).unwrap();
-        }
+        // if arg_show_image {
+        //     let shown_image = show_image::ImageView::new(
+        //         shown_image_info,
+        //         &raw_pixels,
+        //     );
+        //     window.run_function(|mut window| {
+        //         window.set_visible(true);
+        //     });
+        //     window.set_image("image", shown_image).unwrap();
+        // }
 
         //println!("Postprocessing: {:.3} ms", precise_duration_ms(postprocess_duration));
 
@@ -229,7 +288,7 @@ fn main() {
         //println!("frame: {} ms", duration.subsec_millis());
 
         // do some local work while waiting for remote reply
-        thread::sleep(Duration::from_millis(2000));
+        thread::sleep(Duration::from_millis(300));
 
         if request_handle.is_finished() {
             debug!("Request thread finished");

@@ -6,11 +6,14 @@ use std::fs;
 use log::{debug, info, warn, error};
 use log::LevelFilter;
 
+use clap::Parser;
 use rscam::{Camera, Config};
 use turbojpeg;
 use show_image::{ImageView, ImageInfo, create_window, WindowProxy, WindowOptions};
 use ctrlc;
 use image;
+use uuid;
+use blake3;
 
 use cornflakes::{
     VmecRequestFields, 
@@ -19,14 +22,12 @@ use cornflakes::{
     vmec_response_transport,
 };
 
-
 fn print_type<T>(_: &T) {
     println!("{}", std::any::type_name::<T>())
 }
 
 fn precise_duration_ms(duration: Duration) -> f64 {
-    let prec_ms = duration.subsec_micros() as f64 / 1000.0;
-    return prec_ms;
+    duration.subsec_micros() as f64 / 1000.0
 }
 
 fn launch_camera(path: &str, fps: u32, width: u32, height: u32, format: &[u8]) -> io::Result<rscam::Camera> {
@@ -58,71 +59,109 @@ fn decode_jpeg_to_raw(frame: &rscam::Frame) -> Vec<u8> {
     // convert JPEG from camera to raw image with turbojpeg
     // 1.4ms for 640x480
     let image: image::RgbImage = turbojpeg::decompress_image(&frame[..]).unwrap();
-    let pixels = image.into_raw();
-    return pixels;
+    image.into_raw()
 }
 
-fn raw_pixels_to_tensor(pixels: &Vec<u8>) -> tch::Tensor {
-    let pixel_tensor = tch::Tensor::of_slice(&pixels);
+fn raw_pixels_to_tensor(pixels: &[u8], width: u32, height: u32) -> tch::Tensor {
+    let pixel_tensor = tch::Tensor::of_slice(pixels);
 
     // pixel_tensor is a 1D tensor organized as [R, G, B, R, G, B, ...]
     // each ['R', 'G', 'B'] is a pixel, and grouped along width, then height
     // Torch tensor requires [C, H, W] ordering, so we need to reshape and permute
-    let resized_pixel_tensor = pixel_tensor.reshape(&[480, 640, 3]).permute(&[2, 0, 1]);
-
-    return resized_pixel_tensor;
+    pixel_tensor.reshape(&[height as i64, width as i64, 3]).permute(&[2, 0, 1])
 }
 
 fn save_tensor_as_image(tensor: tch::Tensor, path: &str) {
     tch::vision::image::save(&tensor, path).unwrap();
 }
 
-fn crush(frame: &rscam::Frame, width: u32, height: u32) -> Vec<u8> {
+fn crush(frame: &rscam::Frame, width: u32, height: u32, quality: u16) -> Vec<u8> {
+    // Too slow; 8ms for 320x240
+    assert!(quality <= 100 && quality > 0);
     let imgbuf = decode_jpeg_to_imagebuffer(frame);
 
     let resized_imgbuf = image::imageops::resize(&imgbuf, width, height, image::imageops::FilterType::Triangle); // choose CatmullRom (cubic) for better quality and Lanczos3 for best quality
     
-    let encoded_jpeg = turbojpeg::compress_image(&resized_imgbuf, 50, turbojpeg::Subsamp::Sub2x2).unwrap();
+    let encoded_jpeg = turbojpeg::compress_image(&resized_imgbuf, quality as i32, turbojpeg::Subsamp::Sub2x2).unwrap();
 
     encoded_jpeg[..].to_vec()
+}
+
+fn write_jpeg_to_file(path: &str, frame: &rscam::Frame) {
+    let mut file = std::fs::OpenOptions::new()
+    .write(true)
+    .create(true)
+    .open(path).unwrap();
+    file.write_all(&frame[..]).unwrap();
+}
+
+fn get_machine_hash() -> String {
+    // per https://man7.org/linux/man-pages/man5/machine-id.5.html
+    // machine-id should not be used directly (especially over network)
+    // instead, hash it with a cryptographically secure hash function
+    fs::read_to_string("/etc/machine-id").unwrap()
+}
+
+fn hash_strings(strings: Vec<String>) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for string in strings {
+        hasher.update(string.as_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about=None)]
+struct Args {
+    #[arg(long, default_value="/dev/video0")]
+    /// Path to the camera device
+    camera_path: String,
+
+    #[arg(long)]
+    video_path: String,
+
+    #[arg(long, default_value="localhost")]
+    server_ip: String,
+
+    #[arg(long, default_value="5555")]
+    server_port: u16,
+
+    #[arg(long)]
+    show_image_window: bool,
+
+    #[arg(long)]
+    save_cam_image: bool,
+
+    #[arg(long)]
+    save_tensor_image: bool,
+
+    #[arg(long, default_value="300")]
+    // milliseconds to wait for a response from the server
+    receive_timeout: i32,
 }
 
 #[show_image::main]
 fn main() {
     simple_logging::log_to_stderr(LevelFilter::Debug);
 
-    let args: Vec<String> = env::args().collect();
+    let args = Args::parse();
 
-    // parse args for 
-    // 1. camera path
-    // 2. save image?
-    // 3. show image?
-    // confirm that we have at least 3 args
-    if args.len() < 4 {
-        println!("Usage: cargo run <camera_path> <save_image> <show_image>");
-        println!("Example (both save and show): cargo run /dev/video0 save show");
-        println!("Example (only show): cargo run /dev/video0 -- show");
-        return;
-    }
-
-    let arg_cam_path = &args[1];
-    let arg_save_image = &args[2] == "save";
-    let arg_show_image = &args[3] == "show";
-
-    let window: WindowProxy;
+    let arg_cam_path = args.camera_path;
+    let arg_save_image = args.save_cam_image;
+    let arg_show_image = args.show_image_window;
 
     let window_options = WindowOptions {
         start_hidden: true,
         ..Default::default()
     };
-    window = show_image::create_window(
+    let window = show_image::create_window(
         "camera display",
         window_options,
     ).unwrap();
     let shown_image_info = ImageInfo::new(
         show_image::PixelFormat::Rgb8,
-        640,
-        480,
+        320,
+        240,
     );
 
     // clean up window - if not done, gnome-shell leaks and eats CPU
@@ -132,10 +171,9 @@ fn main() {
     }).expect("Error setting Ctrl-C handler");
 
 
-    let camera: Result<rscam::Camera, io::Error> = launch_camera(arg_cam_path, 30, 320, 240, b"MJPG");
+    let camera: Result<rscam::Camera, io::Error> = launch_camera(&arg_cam_path, 30, 320, 240, b"MJPG");
 
     // for file naming
-    let mut i = 0;
     if arg_save_image {
         std::fs::create_dir_all("images").unwrap();
     }
@@ -143,81 +181,48 @@ fn main() {
     // basic ZMQ request client
     let context = zmq::Context::new();
 
+    let mut i = 0;
     loop {
-        info!("=== Next Frame ===\n");
+        i += 1;
+        debug!("\n=== Next Frame ===");
 
         let start = std::time::Instant::now();
 
-        //let raw_pixels: Vec<u8>;
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let request_hash = hash_strings(vec![get_machine_hash(), i.to_string(), timestamp.to_string()]);
 
         let frame = camera.as_ref().unwrap().capture().unwrap();
+        let (width, height) = frame.resolution;
 
         // decode, resize, and re-encode with lower quality
-        // let t1 = precise_duration_ms(start.elapsed());
-        // let img = crush(&frame, 320, 240);
-        // let t2 = precise_duration_ms(start.elapsed());
+        // let jpeg_bytes = crush(&frame, 320, 240, 50);
 
-        // println!("Time to decode and re-encode: {}ms", t2 - t1);
+        if args.save_cam_image {
+            write_jpeg_to_file(&format!("{}/{}_{}_{}", "images", "image", &i.to_string(), "rawcam"), &frame);
+        }
 
-        // write encoded_jpeg to file as .jpg
-        // let mut file = std::fs::OpenOptions::new()
-        // .write(true)
-        // .create(true)
-        // .open(format!("images/{}_fromcam.jpg", i)).unwrap();
-        // i += 1;
-
-        // file.write_all(&frame[..]).unwrap();
-
-
-
-        // let mut file = std::fs::OpenOptions::new()
-        // .write(true)
-        // .create(true)
-        // .open(format!("images/{}_reencoded.jpg", i)).unwrap();
-        // i += 1;
-        // file.write_all(&img[..]).unwrap();
-
-
-    
-
-
-
-
-
-        // get size of encoded jpeg
-        println!("Size of frame from camera: {}", frame.len());
-        //println!("Size of re-encoded image: {}", img.len());
-
-        //print_type(&(frame.to_vec()));
-
-
-        // send jpeg image through zmq
-        //println!("Sending image...");
+        debug!("Size of frame in bytes: {}", frame.len());
 
         let vmec_request_vals = VmecRequestFields {
-            timestamp_ms: 101010101111,
-            device_hash: String::from("ee70384492767846"),
-            request_hash: String::from("hamilton"),
+            timestamp_ms: timestamp,
+            device_hash: get_machine_hash(),
+            request_hash: request_hash,
             image_front: Vec::from(&(*frame)),
             // image_front: Vec::from([1,2,3]),
             image_rear: Vec::from(&(*frame)),
             // image_rear: Vec::from([1,2,3]),
         };
 
-        // vmec_request_vals.image_front = Vec::from(&(*frame));
-
         let request_to_send = vmec_request_transport::encode_request(vmec_request_vals).unwrap();
-        // send a request, wait for reply
-        // run in a thread so we can do other stuff while waiting
-        //println!("Spawning thread to receive reply");
 
-        // Normally, ZMQ sockets are created once outside of loop
-        // However, since the socket is moved into the thread, we need to recreate it
         let requester = context.socket(zmq::REQ).unwrap();
-        requester.set_rcvtimeo(300).unwrap(); // 2 second timeout. Important to set it because otherwise infinite connections will be made since this ZMQ socket is run in a thread
+        requester.set_rcvtimeo(args.receive_timeout).unwrap(); // Set timeout because otherwise infinite connections will be made since ZMQ socket is run in a thread
         //let address = "tcp://localhost:5555";
-        let address = "tcp://18.188.177.59:5555";
-        assert!(requester.connect(address).is_ok());
+        let address = format!("tcp://{}:{}",
+            args.server_ip,
+            args.server_port,
+        );
+        assert!(requester.connect(&address).is_ok());
 
         let request_handle = thread::spawn(move || {
             //requester.send("Hello", 0).unwrap();
@@ -234,7 +239,7 @@ fn main() {
                 Ok(received_bytes) => {
                     let duration = sent_time.elapsed();
                     debug!("Length of received bytes: {}", received_bytes.len());
-                    return Ok((duration, received_bytes));
+                    Ok((duration, received_bytes))
                 },
                 Err(_) => {
                     debug!("Inside ZMQ Thread: Socket timed out waiting for reply");
@@ -247,48 +252,34 @@ fn main() {
             //(duration, received_bytes)
         });
 
+        let t1 = std::time::Instant::now();
+        let raw_pixels = decode_jpeg_to_raw(&frame);
+        debug!("Time to decode JPEG: {} microseconds", t1.elapsed().as_micros());
+        debug!("Size of raw_pixels in bytes: {}", raw_pixels.len());
+        let image_tensor = raw_pixels_to_tensor(&raw_pixels, width, height);
 
-        // // if camera is not found, generate random pixels
-        // raw_pixels = vec![0; 640 * 480 * 3];
-
-        // start timer
-        let postprocess_start = std::time::Instant::now();
-
-        //let image_tensor = raw_pixels_to_tensor(&raw_pixels);
-
-        //println!("resized pixel_tensor: {:?}", image_tensor.size());
+        debug!("resized pixel_tensor: {:?}", image_tensor.size());
 
         // save tensor as image
-        if arg_save_image {
+        if args.save_tensor_image{
             // create directory
             std::fs::create_dir_all("images").unwrap();
-            let filename = format!("images/image_{}.jpg", i);
-            //save_tensor_as_image(image_tensor, &filename);
-            i += 1;
+            let filename = format!("images/image_{}_tensor.jpg", i);
+            save_tensor_as_image(image_tensor, &filename);
         }
 
-        // measure postprocess time in ms
-        let postprocess_duration = postprocess_start.elapsed();
+        if arg_show_image {
+            let shown_image = show_image::ImageView::new(
+                shown_image_info,
+                &raw_pixels,
+            );
+            window.run_function(|mut window| {
+                window.set_visible(true);
+            });
+            window.set_image("image", shown_image).unwrap();
+        }
 
-        // if arg_show_image {
-        //     let shown_image = show_image::ImageView::new(
-        //         shown_image_info,
-        //         &raw_pixels,
-        //     );
-        //     window.run_function(|mut window| {
-        //         window.set_visible(true);
-        //     });
-        //     window.set_image("image", shown_image).unwrap();
-        // }
-
-        //println!("Postprocessing: {:.3} ms", precise_duration_ms(postprocess_duration));
-
-        // measure time
-        let duration = start.elapsed();
-        //println!("frame: {} ms", duration.subsec_millis());
-
-        // do some local work while waiting for remote reply
-        thread::sleep(Duration::from_millis(300));
+        thread::sleep(Duration::from_millis(500)); // mock work on client
 
         if request_handle.is_finished() {
             debug!("Request thread finished");
@@ -325,7 +316,7 @@ mod tests {
     fn running_in_ci_server() -> bool {
         // check CI environment variable
         let ci = env::var("CI").unwrap_or("false".to_string());
-        return ci == "true";
+        ci == "true"
     }
 
     #[test]
@@ -355,7 +346,7 @@ mod tests {
             pixels[i] = subpixel_value;
         }
 
-        let image_tensor: tch::Tensor = raw_pixels_to_tensor(&pixels);
+        let image_tensor: tch::Tensor = raw_pixels_to_tensor(&pixels, 640, 480);
         println!("image_tensor shape: {:?}", image_tensor.size());
         assert_eq!(image_tensor.size(), &[3, 480, 640]); // C, H, W ordering for tensor
 

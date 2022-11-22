@@ -3,4 +3,4 @@ debug/
 Cargo.lock
 **/*.rs.bk
 
-/images/**
+**/images/**

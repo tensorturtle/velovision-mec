@@ -14,7 +14,7 @@ This project depends on the following libraries:
 Install them with apt.
 
 ```
-build-essentials
+build-essential
 ```
 
 rscam requires
